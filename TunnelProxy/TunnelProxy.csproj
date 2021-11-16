@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net5.0</TargetFramework>
+    <Company>Stellantis</Company>
+    <Authors>Luca Giuliani</Authors>
+    <Description>TCP connection tunneler to HTTP Proxy</Description>
+    <FileVersion>1.0.2111.1617</FileVersion>
+  </PropertyGroup>
+
+</Project>
