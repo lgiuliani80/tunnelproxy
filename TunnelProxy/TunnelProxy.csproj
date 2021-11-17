@@ -14,7 +14,7 @@
     <None Remove="README.md" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="README.md" />
+    <Content Include="README.md" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="appsettings.json">
@@ -27,8 +27,5 @@
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="6.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="6.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.EventLog" Version="6.0.0" />
-  </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="UI.for.WinForms.AllControls.Net50.Trial" Version="2021.3.914" />
   </ItemGroup>
 </Project>
