@@ -1,5 +1,5 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project Sdk="Microsoft.NET.Sdk">
-
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net5.0</TargetFramework>
@@ -7,23 +7,28 @@
     <Authors>Luca Giuliani</Authors>
     <Description>TCP connection tunneler to HTTP Proxy</Description>
     <FileVersion>1.0.2111.1617</FileVersion>
+    <Product>TCPTunnelToHttpProxy</Product>
   </PropertyGroup>
-
   <ItemGroup>
     <None Remove="appsettings.json" />
+    <None Remove="README.md" />
   </ItemGroup>
-
+  <ItemGroup>
+    <Compile Include="README.md" />
+  </ItemGroup>
   <ItemGroup>
     <Content Include="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
-
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="6.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="6.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="6.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging" Version="6.0.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.EventLog" Version="6.0.0" />
   </ItemGroup>
-
+  <ItemGroup>
+    <PackageReference Include="UI.for.WinForms.AllControls.Net50.Trial" Version="2021.3.914" />
+  </ItemGroup>
 </Project>

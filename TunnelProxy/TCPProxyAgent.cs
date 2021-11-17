@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
@@ -16,6 +17,10 @@ namespace TunnelProxy
     public class TCPProxyAgent : IHostedService
     {
         const int PROXY_TIMEOUT_MS = 10000;
+        const int MAX_CLIENTS = 10;
+
+        protected readonly ConcurrentDictionary<string, (TcpClient client, TcpClient proxy)> _clients = new();
+        protected volatile int _connectionCount;
 
         protected Thread _serverThread;
         protected ILogger<TCPProxyAgent> _logger;
@@ -31,6 +36,152 @@ namespace TunnelProxy
             _config = configuration;
         }
 
+        private void ManageClientConnection(TcpClient scli)
+        {
+            TcpClient proxycli = null;
+            string clientSpec = scli.Client.RemoteEndPoint.ToString();
+
+            Interlocked.Increment(ref _connectionCount);
+
+            try
+            {
+                var nscli = scli.GetStream();
+
+                _logger.LogInformation($"[{clientSpec}] Connection established with client: clients connected = {_connectionCount}");
+
+                proxycli = new TcpClient(_cfg.proxyHost, _cfg.proxyPort);
+                var ns = proxycli.GetStream();
+
+                _clients[clientSpec] = (scli, proxycli);
+                    
+                var proxySpec = proxycli.Client.RemoteEndPoint.ToString();
+
+                var msg = $"CONNECT {_cfg.destinationHost}:{_cfg.destinationPort} HTTP/1.1\r\nConnection: close\r\n\r\n";
+
+                _logger.LogDebug($"[{clientSpec}] > {msg}");
+
+                ns.Write(Encoding.ASCII.GetBytes(msg));
+
+                const string EXPECT = "\r\n\r\n";
+                var bufin = new byte[1024];
+                var established = false;
+                var aborted = false;
+                var cnt = 0;
+                var offset = 0;
+                ns.ReadTimeout = PROXY_TIMEOUT_MS;
+                var nread = ns.Read(bufin, offset, bufin.Length - offset);
+
+                while (nread > 0)
+                {
+                    for (int i = 0; i < nread; i++)
+                    {
+                        //_logger.LogTrace($"[{clientSpec}] < {(char)bufin[offset + i]}");
+
+                        if (bufin[offset + i] == EXPECT[cnt])
+                        {
+                            cnt++;
+                            if (cnt == EXPECT.Length)
+                            {
+                                var responseStatusAndHeaders = Encoding.UTF8.GetString(bufin, 0, offset + i);
+                                var responseLines = responseStatusAndHeaders.Split("\r\n");
+
+                                _logger.LogDebug($"[{clientSpec}] << {responseStatusAndHeaders}");
+
+                                if (!Regex.IsMatch(responseLines[0], @"^HTTP/1\.1 200 .*$"))
+                                {
+                                    aborted = true;
+                                    break;
+                                }
+
+                                nscli.Write(bufin, offset + i + 1, nread - i - 1);
+                                established = true;
+                                break;
+                            }
+                        }
+                        else
+                        {
+                            cnt = 0;
+                        }
+                    }
+
+                    if (established || aborted)
+                        break;
+
+                    offset += nread;
+                    nread = ns.Read(bufin, offset, bufin.Length - offset);
+                }
+
+                if (!established)
+                {
+                    _logger.LogWarning($"[{clientSpec}] Proxy CONNECT {_cfg.destinationHost}:{_cfg.destinationPort} failed!");
+                    return;
+                }
+
+                _logger.LogInformation($"[{clientSpec}] Tunnel established");
+
+                ns.ReadTimeout = Timeout.Infinite;
+
+                Task.Run(() =>
+                {
+                    _logger.LogDebug($"[{clientSpec}] Data tunnelling [proxy({proxySpec})] -> [client({clientSpec})] STARTED");
+
+                    try
+                    {
+                        int nread2 = 0;
+                        var bufin2 = new byte[1024];
+                        while ((nread2 = ns.Read(bufin2, 0, bufin2.Length)) > 0)
+                        {
+                            nscli.Write(bufin2, 0, nread2);
+                        }
+                    }
+                    catch (System.IO.IOException ioe) when ((ioe.InnerException as SocketException)?.SocketErrorCode == SocketError.ConnectionAborted)
+                    {
+                        _logger.LogInformation($"[{clientSpec}] disconnected");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogError(ex, $"[{clientSpec}] Exception in tunnelling proxy -> client");
+                        scli.Close();
+                    }
+
+                    _logger.LogDebug($"[{clientSpec}] Data tunnelling [proxy({proxySpec})] -> [client({clientSpec})] terminated");
+                });
+
+                _logger.LogDebug($"[{clientSpec}] Data tunnelling [client({clientSpec})] -> [proxy({proxySpec})] STARTED");
+
+                try
+                {
+                    while ((nread = nscli.Read(bufin, 0, bufin.Length)) > 0)
+                    {
+                        ns.Write(bufin, 0, nread);
+                    }
+                }
+                catch (System.IO.IOException ioe) when ((ioe.InnerException as SocketException)?.SocketErrorCode == SocketError.ConnectionAborted)
+                {
+                    _logger.LogInformation($"[{clientSpec}] disconnected");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, $"[{clientSpec}] Exception in tunnelling client -> proxy");
+                }
+
+                _logger.LogDebug($"[{clientSpec}] Data tunnelling [client({clientSpec})] -> [proxy({proxySpec})] terminated");
+
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Exception while connecting to the proxy server or managing the tunnel");
+            }
+            finally
+            {
+                scli.Close();
+                proxycli.Close();
+                _clients.Remove(clientSpec, out var removed);
+                Interlocked.Decrement(ref _connectionCount);
+                _logger.LogInformation($"[{clientSpec}] Tunnel destroyed: clients connected = {_connectionCount}");
+            }
+        }
+
         private void ThreadServerProc()
         {
             _logger.LogInformation("Server thread started");
@@ -39,7 +190,6 @@ namespace TunnelProxy
             {
                 TcpListener tcpListener = new TcpListener(IPAddress.Parse(_cfg.listeningHost), _cfg.listeningPort);
                 TcpClient scli = null;
-                TcpClient proxycli = null;
 
                 tcpListener.Start();
 
@@ -48,9 +198,14 @@ namespace TunnelProxy
                     try
                     {
                         tcpListener?.Stop();
-                        scli?.Close();
-                        proxycli?.Close();
-                        // TODO: chiudere tutti i socket verso proxy e verso i client
+
+                        foreach (var v in _clients.Values)
+                        {
+                            var (scli, proxycli) = v;
+
+                            scli?.Close();
+                            proxycli?.Close();
+                        }
                     }
                     catch (Exception ex)
                     {
@@ -62,133 +217,14 @@ namespace TunnelProxy
 
                 while ((scli = tcpListener.AcceptTcpClient()) != null)
                 {
-                    var nscli = scli.GetStream();
-
-                    proxycli = new TcpClient(_cfg.proxyHost, _cfg.proxyPort);
-                    var ns = proxycli.GetStream();
-
-                    var clientSpec = scli.Client.RemoteEndPoint.ToString();
-                    var proxySpec = proxycli.Client.RemoteEndPoint.ToString();
-
-                    var msg = $"CONNECT {_cfg.destinationHost}:{_cfg.destinationPort} HTTP/1.1\r\nConnection: close\r\n\r\n";
-                    
-                    _logger.LogDebug($"[{clientSpec}] > {msg}");
-                    
-                    ns.Write(Encoding.ASCII.GetBytes(msg));
-
-                    const string EXPECT = "\r\n\r\n";
-                    var bufin = new byte[1024];
-                    var established = false;
-                    var aborted = false;
-                    var cnt = 0;
-                    var offset = 0;
-                    ns.ReadTimeout = PROXY_TIMEOUT_MS;
-                    var nread = ns.Read(bufin, offset, bufin.Length - offset);
-
-                    while (nread > 0)
+                    if (_connectionCount >= MAX_CLIENTS)
                     {
-                        for (int i = 0; i < nread; i++)
-                        {
-                            //_logger.LogTrace($"[{clientSpec}] < {(char)bufin[offset + i]}");
-
-                            if (bufin[offset + i] == EXPECT[cnt])
-                            {
-                                cnt++;
-                                if (cnt == EXPECT.Length)
-                                {
-                                    var responseStatusAndHeaders = Encoding.UTF8.GetString(bufin, 0, offset + i);
-                                    var responseLines = responseStatusAndHeaders.Split("\r\n");
-
-                                    _logger.LogDebug($"[{clientSpec}] << {responseStatusAndHeaders}");
-
-                                    if (!Regex.IsMatch(responseLines[0], "^HTTP/1.1 200 .*$"))
-                                    {
-                                        aborted = true;
-                                        break;
-                                    }
-
-                                    nscli.Write(bufin, offset + i + 1, nread - i - 1);
-                                    established = true;
-                                    break;
-                                }
-                            }
-                            else
-                            {
-                                cnt = 0;
-                            }
-                        }
-
-                        if (established || aborted)
-                            break;
-
-                        offset += nread;
-                        nread = ns.Read(bufin, offset, bufin.Length - offset);
+                        try { scli?.Close(); } catch { }
                     }
-
-                    if (!established)
+                    else
                     {
-                        _logger.LogWarning($"[{clientSpec}] Proxy CONNECT {_cfg.destinationHost}:{_cfg.destinationPort} failed!");
-
-                        proxycli.Close();
-                        scli.Close();
-                        continue;
+                        Task.Run(() => ManageClientConnection(scli));
                     }
-
-                    _logger.LogInformation($"[{clientSpec}] Tunnel established");
-
-                    ns.ReadTimeout = Timeout.Infinite;
-
-                    Task.Run(() =>
-                    {
-                        _logger.LogDebug($"[{clientSpec}] Data tunnelling [proxy({proxySpec})] -> [client({clientSpec})] STARTED");
-
-                        try
-                        {
-                            int nread2 = 0;
-                            var bufin2 = new byte[1024];
-                            while ((nread2 = ns.Read(bufin2, 0, bufin2.Length)) > 0)
-                            {
-                                nscli.Write(bufin2, 0, nread2);
-                            }
-                        }
-                        catch (System.IO.IOException ioe) when ((ioe.InnerException as SocketException)?.SocketErrorCode == SocketError.ConnectionAborted)
-                        {
-                            _logger.LogInformation($"[{clientSpec}] disconnected");
-                        }
-                        catch (Exception ex) 
-                        {
-                            _logger.LogError(ex, $"[{clientSpec}] Exception in tunnelling proxy -> client");
-                            scli.Close();
-                        }
-
-                        _logger.LogDebug($"[{clientSpec}] Data tunnelling [proxy({proxySpec})] -> [client({clientSpec})] terminated");
-                    });
-
-                    _logger.LogDebug($"[{clientSpec}] Data tunnelling [client({clientSpec})] -> [proxy({proxySpec})] STARTED");
-
-                    try
-                    {
-                        while ((nread = nscli.Read(bufin, 0, bufin.Length)) > 0)
-                        {
-                            ns.Write(bufin, 0, nread);
-                        }
-                    }
-                    catch (System.IO.IOException ioe) when ((ioe.InnerException as SocketException)?.SocketErrorCode == SocketError.ConnectionAborted)
-                    {
-                        _logger.LogInformation($"[{clientSpec}] disconnected");
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogWarning(ex, $"[{clientSpec}] Exception in tunnelling client -> proxy");
-                        proxycli.Close();
-                    }
-
-                    _logger.LogDebug($"[{clientSpec}] Data tunnelling [client({clientSpec})] -> [proxy({proxySpec})] terminated");
-
-                    scli.Close();
-                    proxycli.Close();
-
-                    _logger.LogInformation($"[{clientSpec}] Tunnel destroyed");
 
                     _logger.LogDebug("Waiting for a client to connect...");
                 }
