@@ -2,7 +2,7 @@
   "profiles": {
     "TunnelProxy": {
       "commandName": "Project",
-      "commandLineArgs": "3333 localhost 3128 80.211.24.168 22"
+      "commandLineArgs": "--listeningPort 3333 --proxyHost localhost --proxyPort 3128 --destinationHost 80.211.24.168 --destinationPort 22"
     }
   }
 }
