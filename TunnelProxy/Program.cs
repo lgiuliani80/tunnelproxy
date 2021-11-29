@@ -20,18 +20,14 @@ namespace TunnelProxy
             SetupEventSource();
 
             Host.CreateDefaultBuilder(args)
-                .ConfigureLogging(logging =>
-                {
-                    if (Environment.OSVersion.Platform == PlatformID.Win32NT)
-                    {
-                        logging.AddEventLog(new EventLogSettings { SourceName = EventSourceName });
-                    }
-                })
-                .UseWindowsService()
-                .ConfigureServices(sp =>
+                .ConfigureServices((hb, sp) =>
                 {
                     sp.AddHostedService<TCPProxyAgent>();
+                    sp.Configure<EventLogSettings>(settings => { 
+                        settings.SourceName = hb.Configuration["instanceName"] ?? hb.HostingEnvironment.ApplicationName; 
+                    });
                 })
+                .UseWindowsService()
                 .Build()
                 .Run();
         }
