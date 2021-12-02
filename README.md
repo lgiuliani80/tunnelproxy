@@ -3,7 +3,7 @@
 This server listens on a (local) port and, when a connection is received, opens a connection to the configured HTTP proxy server, 
 issues the '`CONNECT`' request towards the configured destination host, then establishes a transparent tunnel between the local client and the remote server.
 
-This is useful when having to deal with services (like e.g. SFTP connector for Data Factory running on a self-hosted Integration Runtime) which do not support proxy configuration
+This is useful when having to deal with *services* (like e.g. SFTP connector for Data Factory running on a self-hosted Integration Runtime) *which __do not__ support proxy server* configuration
 and the (enterprise) network in which they're running require the use of a proxy to access the Internet.
 
 NOTES:
