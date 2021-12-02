@@ -12,5 +12,5 @@ NOTES:
     multiple parallel instances with different configurations).
 2. this server supports HTTP proxies ONLY, no support to SOCKS4/5 proxies.
 3. connection to proxies is not recycled nor pooled, so it's not intended for high rate of incoming connections to serve.
-4. the code is written in .NET 5 so it's platform indipendent. On Windows though it's intended to be run as Windows Service. Look at [this]() README for details on how to create
+4. the code is written in .NET 5 so it's platform indipendent. On Windows though it's intended to be run as Windows Service. Look at [this](TunnelProxy/README.md) README for details on how to create
    system service.
