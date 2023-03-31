@@ -6,7 +6,7 @@
     <Company>Stellantis</Company>
     <Authors>Luca Giuliani</Authors>
     <Description>TCP connection tunneler to HTTP Proxy</Description>
-    <FileVersion>1.0.2111.1617</FileVersion>
+    <FileVersion>1.1.2111.2917</FileVersion>
     <Product>TCPTunnelToHttpProxy</Product>
   </PropertyGroup>
   <ItemGroup>
